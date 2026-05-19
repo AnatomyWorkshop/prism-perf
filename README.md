@@ -96,6 +96,41 @@ When prism-perf says INFEASIBLE, it's provably true — not a guess, not a predi
 
 When it says FEASIBLE, it means no known bound is violated. Your system might still fail for reasons outside the model (GC pauses, kernel scheduling, network jitter). The tool gives hard lower bounds, not performance predictions.
 
+## GitHub Action
+
+Add automatic performance feasibility checks to your PRs. Copy this into `.github/workflows/perf-check.yml`:
+
+```yaml
+name: Performance Feasibility Check
+
+on:
+  pull_request:
+    paths:
+      - '**/topology.yaml'
+      - 'infra/**/*.yaml'
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: AnatomyWorkshop/prism-perf@main
+        with:
+          topology-path: 'infra/topology.yaml'
+          comment: 'true'
+          fail-on-infeasible: 'false'
+```
+
+When a PR modifies your topology, prism-perf comments the verdict directly on the PR:
+
+- **FEASIBLE** — no known bound violated, shows tightest constraint and margin
+- **INFEASIBLE** — mathematical proof of impossibility with exact binding constraint
+- **UNKNOWN** — insufficient data, suggests what to measure next
+
+Set `fail-on-infeasible: 'true'` to block merge on infeasible targets.
+
 ## Run tests
 
 ```bash

@@ -1,0 +1,117 @@
+name: 'Prism-Perf Check'
+description: 'Detect mathematically impossible performance targets in your microservice topology'
+author: 'AnatomyWorkshop'
+
+inputs:
+  topology-path:
+    description: 'Path to topology YAML file'
+    required: true
+    default: 'topology.yaml'
+  comment:
+    description: 'Post result as PR comment'
+    required: false
+    default: 'true'
+  fail-on-infeasible:
+    description: 'Fail the check if target is infeasible'
+    required: false
+    default: 'false'
+
+outputs:
+  verdict:
+    description: 'FEASIBLE, INFEASIBLE, or UNKNOWN'
+  report:
+    description: 'Full analysis report'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      shell: bash
+      run: pip install pyyaml
+
+    - name: Checkout prism-perf
+      uses: actions/checkout@v4
+      with:
+        repository: AnatomyWorkshop/prism-perf
+        path: .prism-perf
+
+    - name: Run check
+      id: check
+      shell: bash
+      run: |
+        cd .prism-perf
+        OUTPUT=$(python prism_perf.py check "${{ github.workspace }}/${{ inputs.topology-path }}" 2>&1) || true
+        echo "report<<EOF" >> $GITHUB_OUTPUT
+        echo "$OUTPUT" >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+        if echo "$OUTPUT" | grep -q "VERDICT: INFEASIBLE"; then
+          echo "verdict=INFEASIBLE" >> $GITHUB_OUTPUT
+        elif echo "$OUTPUT" | grep -q "VERDICT: FEASIBLE"; then
+          echo "verdict=FEASIBLE" >> $GITHUB_OUTPUT
+        else
+          echo "verdict=UNKNOWN" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Comment on PR
+      if: inputs.comment == 'true' && github.event_name == 'pull_request'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const verdict = '${{ steps.check.outputs.verdict }}';
+          const report = `${{ steps.check.outputs.report }}`;
+
+          let badge = '';
+          if (verdict === 'FEASIBLE') {
+            badge = '## ✅ Prism-Perf: FEASIBLE';
+          } else if (verdict === 'INFEASIBLE') {
+            badge = '## ⚠️ Prism-Perf: INFEASIBLE';
+          } else {
+            badge = '## ❓ Prism-Perf: UNKNOWN';
+          }
+
+          let body = badge + '\n\n';
+
+          if (verdict === 'INFEASIBLE') {
+            body += '> **Warning**: Mathematical analysis indicates this performance target may be unachievable under the declared topology. If you have empirical data (load test results) that contradicts this, you may safely ignore this warning.\n\n';
+          }
+
+          body += '```\n' + report + '\n```\n\n';
+          body += '---\n';
+          body += '*[Add prism-perf to your repo](https://github.com/AnatomyWorkshop/prism-perf) — detect impossible SLA targets before they waste engineering time.*';
+
+          // Find and update existing comment or create new one
+          const { data: comments } = await github.rest.issues.listComments({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: context.issue.number,
+          });
+
+          const existing = comments.find(c => c.body.includes('Prism-Perf:'));
+
+          if (existing) {
+            await github.rest.issues.updateComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: existing.id,
+              body: body,
+            });
+          } else {
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: body,
+            });
+          }
+
+    - name: Fail if infeasible
+      if: inputs.fail-on-infeasible == 'true' && steps.check.outputs.verdict == 'INFEASIBLE'
+      shell: bash
+      run: |
+        echo "::error::Performance target is mathematically infeasible. See PR comment for details."
+        exit 1

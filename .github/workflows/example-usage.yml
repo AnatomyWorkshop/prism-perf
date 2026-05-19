@@ -1,0 +1,24 @@
+# .github/workflows/perf-check.yml
+# Add this to your repo to automatically check topology changes in PRs.
+name: Performance Feasibility Check
+
+on:
+  pull_request:
+    paths:
+      - '**/topology.yaml'
+      - '**/topology.yml'
+      - 'infra/**/*.yaml'
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: AnatomyWorkshop/prism-perf@main
+        with:
+          topology-path: 'infra/topology.yaml'
+          comment: 'true'
+          fail-on-infeasible: 'false'  # set to 'true' to block merge
