@@ -32,11 +32,13 @@ def cmd_check(args):
 def cmd_infer(args):
     """Infer topology from OTel JSON trace."""
     if not args:
-        print("Usage: prism-perf infer <trace.json> [--output topology.yaml]")
+        print("Usage: prism-perf infer <trace.json> [--output topology.yaml] [--preserve-target]")
         sys.exit(1)
 
     trace_path = args[0]
     output_path = None
+    preserve_target = "--preserve-target" in args
+
     if "--output" in args:
         idx = args.index("--output")
         if idx + 1 < len(args):
@@ -48,12 +50,75 @@ def cmd_infer(args):
 
     yaml_content = infer_topology(trace_path)
 
+    if preserve_target and output_path and os.path.exists(output_path):
+        yaml_content = _merge_preserve_target(yaml_content, output_path)
+
     if output_path:
+        os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
         with open(output_path, "w", encoding="utf-8") as f:
             f.write(yaml_content)
         print(f"Topology written to: {output_path}")
     else:
         print(yaml_content)
+
+
+def _merge_preserve_target(new_yaml: str, existing_path: str) -> str:
+    """Keep target and resources sections from existing file, update services/chain from new inference."""
+    with open(existing_path, "r", encoding="utf-8") as f:
+        existing = f.read()
+
+    # Extract target and resources from existing
+    target_section = ""
+    resources_section = ""
+    in_target = False
+    in_resources = False
+
+    for line in existing.split("\n"):
+        if line.startswith("target:"):
+            in_target = True
+            in_resources = False
+            target_section = line + "\n"
+        elif line.startswith("  resources:"):
+            in_resources = True
+            in_target = False
+            resources_section = line + "\n"
+        elif in_target:
+            if line and not line[0].isspace():
+                in_target = False
+            else:
+                target_section += line + "\n"
+        elif in_resources:
+            if line and not line[0].isspace() and not line.startswith("    "):
+                in_resources = False
+            else:
+                resources_section += line + "\n"
+
+    # Replace target/resources in new yaml
+    new_lines = []
+    skip_until_next_section = False
+    for line in new_yaml.split("\n"):
+        if line.startswith("target:") or line.strip().startswith("# TODO: fill in your SLA"):
+            skip_until_next_section = True
+            continue
+        if line.startswith("  resources:") or line.strip().startswith("# TODO: fill in actual"):
+            skip_until_next_section = True
+            continue
+        if skip_until_next_section:
+            if line and not line.startswith(" ") and not line.startswith("#"):
+                skip_until_next_section = False
+                new_lines.append(line)
+            elif not line:
+                skip_until_next_section = False
+            continue
+        new_lines.append(line)
+
+    result = "\n".join(new_lines).rstrip() + "\n"
+    if resources_section:
+        result += "\n" + resources_section.rstrip() + "\n"
+    if target_section:
+        result += "\n" + target_section.rstrip() + "\n"
+
+    return result
 
 
 def main():
@@ -63,6 +128,8 @@ def main():
         print("Commands:")
         print("  check <topology.yaml>    Check if SLA target is feasible")
         print("  infer <trace.json>       Generate topology YAML from OTel trace")
+        print("                           --output <path>     write to file")
+        print("                           --preserve-target   keep existing target/resources")
         print("")
         print("Examples:")
         print("  python prism_perf.py check examples/payment_chain.yaml")

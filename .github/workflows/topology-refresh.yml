@@ -1,0 +1,73 @@
+# .github/workflows/topology-refresh.yml
+# Daily cron: re-infer topology from latest OTel traces and open a PR if changed.
+# Requires: OTEL_TRACE_URL secret (endpoint to fetch latest trace export)
+name: Topology Auto-Refresh
+
+on:
+  schedule:
+    - cron: '0 3 * * *'  # 3am UTC daily
+  workflow_dispatch:      # allow manual trigger
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install pyyaml
+
+      - name: Checkout prism-perf
+        uses: actions/checkout@v4
+        with:
+          repository: AnatomyWorkshop/prism-perf
+          path: .prism-perf
+
+      - name: Fetch latest trace
+        env:
+          OTEL_TRACE_URL: ${{ secrets.OTEL_TRACE_URL }}
+          OTEL_TRACE_TOKEN: ${{ secrets.OTEL_TRACE_TOKEN }}
+        run: |
+          curl -s -H "Authorization: Bearer $OTEL_TRACE_TOKEN" \
+            "$OTEL_TRACE_URL" -o /tmp/latest_trace.json
+
+      - name: Re-infer topology
+        run: |
+          cd .prism-perf
+          python prism_perf.py infer /tmp/latest_trace.json \
+            --output "${{ github.workspace }}/infra/topology.yaml" \
+            --preserve-target  # keep existing target/resources, only update latencies
+
+      - name: Check if topology changed
+        id: diff
+        run: |
+          if git diff --quiet infra/topology.yaml; then
+            echo "changed=false" >> $GITHUB_OUTPUT
+          else
+            echo "changed=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Open PR if changed
+        if: steps.diff.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          commit-message: 'chore: refresh topology from latest OTel traces'
+          title: 'Topology refresh — latencies updated from production traces'
+          body: |
+            Automated topology refresh from latest OpenTelemetry traces.
+
+            This PR updates measured latencies in `infra/topology.yaml` to reflect
+            current production behavior. prism-perf will re-check feasibility on this PR.
+
+            Review the diff to confirm the latency changes are expected.
+          branch: topology-refresh
+          delete-branch: true
