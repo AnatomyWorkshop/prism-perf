@@ -1,0 +1,29 @@
+topology:
+  name: "cdn-edge-cache"
+  services:
+    - name: edge_proxy
+      type: sync
+      latency_p50: 1ms
+      latency_p99: 3ms
+    - name: cache_lookup
+      type: sync
+      latency_p50: 0.5ms
+      latency_p99: 2ms
+      connections: 100
+      latency_per_op: 0.5ms
+    - name: origin_fallback
+      type: sync
+      latency_p50: 15ms
+      latency_p99: 40ms
+
+  chain:
+    - edge_proxy -> cache_lookup
+
+  resources:
+    cpu_cores: 16
+    connection_pool: 100
+    network_rtt_internal: 0.2ms
+
+target:
+  latency_p99: 50ms
+  throughput: 5000 qps

@@ -1,0 +1,27 @@
+topology:
+  name: "scaling-wall"
+  services:
+    - name: load_balancer
+      type: sync
+      latency_p50: 1ms
+      latency_p99: 2ms
+    - name: compute_service
+      type: sync
+      latency_p50: 100ms
+      latency_p99: 200ms
+      parallelism: 64
+      serial_fraction: 0.08
+      connections: 64
+      latency_per_op: 100ms
+
+  chain:
+    - load_balancer -> compute_service
+
+  resources:
+    cpu_cores: 64
+    connection_pool: 64
+    network_rtt_internal: 0.3ms
+
+target:
+  latency_p99: 10ms
+  throughput: 2000 qps

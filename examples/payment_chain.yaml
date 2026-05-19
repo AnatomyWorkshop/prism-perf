@@ -1,0 +1,33 @@
+topology:
+  name: "payment-service-chain"
+  services:
+    - name: api_gateway
+      type: sync
+      latency_p50: 2ms
+      latency_p99: 5ms
+    - name: auth_service
+      type: sync
+      latency_p50: 10ms
+      latency_p99: 30ms
+    - name: payment_gateway
+      type: sync
+      latency_p50: 200ms
+      latency_p99: 500ms
+    - name: db_write
+      type: sync
+      latency_p50: 3ms
+      latency_p99: 5ms
+      latency_per_op: 5ms
+      connections: 20
+
+  chain:
+    - api_gateway -> auth_service -> payment_gateway -> db_write
+
+  resources:
+    cpu_cores: 8
+    connection_pool: 20
+    network_rtt_internal: 0.5ms
+
+target:
+  latency_p99: 100ms
+  throughput: 10000 qps

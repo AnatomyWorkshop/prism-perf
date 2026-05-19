@@ -1,0 +1,140 @@
+{
+  "resourceSpans": [
+    {
+      "resource": {
+        "attributes": [
+          {"key": "service.name", "value": {"stringValue": "api-gateway"}}
+        ]
+      },
+      "scopeSpans": [
+        {
+          "spans": [
+            {
+              "name": "POST /checkout",
+              "spanId": "span001",
+              "parentSpanId": "",
+              "startTimeUnixNano": "1700000000000000000",
+              "endTimeUnixNano": "1700000000003000000"
+            },
+            {
+              "name": "POST /checkout",
+              "spanId": "span011",
+              "parentSpanId": "",
+              "startTimeUnixNano": "1700000001000000000",
+              "endTimeUnixNano": "1700000001004000000"
+            },
+            {
+              "name": "POST /checkout",
+              "spanId": "span021",
+              "parentSpanId": "",
+              "startTimeUnixNano": "1700000002000000000",
+              "endTimeUnixNano": "1700000002002500000"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "resource": {
+        "attributes": [
+          {"key": "service.name", "value": {"stringValue": "auth-service"}}
+        ]
+      },
+      "scopeSpans": [
+        {
+          "spans": [
+            {
+              "name": "verify_token",
+              "spanId": "span002",
+              "parentSpanId": "span001",
+              "startTimeUnixNano": "1700000000000500000",
+              "endTimeUnixNano": "1700000000010500000"
+            },
+            {
+              "name": "verify_token",
+              "spanId": "span012",
+              "parentSpanId": "span011",
+              "startTimeUnixNano": "1700000001000500000",
+              "endTimeUnixNano": "1700000001012000000"
+            },
+            {
+              "name": "verify_token",
+              "spanId": "span022",
+              "parentSpanId": "span021",
+              "startTimeUnixNano": "1700000002000400000",
+              "endTimeUnixNano": "1700000002009000000"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "resource": {
+        "attributes": [
+          {"key": "service.name", "value": {"stringValue": "payment-processor"}}
+        ]
+      },
+      "scopeSpans": [
+        {
+          "spans": [
+            {
+              "name": "charge_card",
+              "spanId": "span003",
+              "parentSpanId": "span002",
+              "startTimeUnixNano": "1700000000011000000",
+              "endTimeUnixNano": "1700000000211000000"
+            },
+            {
+              "name": "charge_card",
+              "spanId": "span013",
+              "parentSpanId": "span012",
+              "startTimeUnixNano": "1700000001013000000",
+              "endTimeUnixNano": "1700000001250000000"
+            },
+            {
+              "name": "charge_card",
+              "spanId": "span023",
+              "parentSpanId": "span022",
+              "startTimeUnixNano": "1700000002010000000",
+              "endTimeUnixNano": "1700000002195000000"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "resource": {
+        "attributes": [
+          {"key": "service.name", "value": {"stringValue": "db-writer"}}
+        ]
+      },
+      "scopeSpans": [
+        {
+          "spans": [
+            {
+              "name": "INSERT order",
+              "spanId": "span004",
+              "parentSpanId": "span003",
+              "startTimeUnixNano": "1700000000212000000",
+              "endTimeUnixNano": "1700000000217000000"
+            },
+            {
+              "name": "INSERT order",
+              "spanId": "span014",
+              "parentSpanId": "span013",
+              "startTimeUnixNano": "1700000001251000000",
+              "endTimeUnixNano": "1700000001258000000"
+            },
+            {
+              "name": "INSERT order",
+              "spanId": "span024",
+              "parentSpanId": "span023",
+              "startTimeUnixNano": "1700000002196000000",
+              "endTimeUnixNano": "1700000002201000000"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
