@@ -1,14 +1,80 @@
 """AI-assisted latency estimation from source code analysis.
 
-Uses Claude API to read service source code and estimate p50/p99 latencies
-based on detected patterns: DB queries, HTTP calls, cache operations, etc.
+Reads service source code and estimates p50/p99 latencies based on detected
+patterns: DB queries, HTTP calls, cache operations, etc.
 
 This fills in the TODO latencies that scan produces, making the workflow
 truly zero-config for projects with readable source code.
+
+Configure via environment (same as advisor.py):
+  PRISM_AI_BASE_URL   — base URL
+  PRISM_AI_KEY        — API key
+  PRISM_AI_MODEL      — model name (default: deepseek-chat)
+
+Or set DEEPSEEK_API_KEY / ANTHROPIC_API_KEY for automatic configuration.
 """
 import os
 import json
+import re
 from typing import Optional
+
+
+def _load_api_config() -> tuple[str, str, str]:
+    """
+    Return (base_url, api_key, model) from environment or .env.keys.
+
+    Priority:
+      1. PRISM_AI_* env vars (explicit user config)
+      2. DEEPSEEK_API_KEY (official Deepseek)
+      3. ANTHROPIC_API_KEY (official Anthropic)
+      4. .env.keys file (local dev convenience — not documented publicly)
+    """
+    raw = {}
+    for search_dir in [
+        os.path.dirname(os.path.abspath(__file__)),
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    ]:
+        env_path = os.path.join(search_dir, ".env.keys")
+        if os.path.exists(env_path):
+            with open(env_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith("#") and "=" in line:
+                        k, v = line.split("=", 1)
+                        raw[k.strip()] = v.strip().strip('"\'')
+            break
+
+    for k in list(raw):
+        if os.environ.get(k):
+            raw[k] = os.environ[k]
+
+    # 1. Explicit user config
+    if raw.get("PRISM_AI_KEY") and raw.get("PRISM_AI_BASE_URL"):
+        return (
+            raw["PRISM_AI_BASE_URL"].rstrip("/"),
+            raw["PRISM_AI_KEY"],
+            raw.get("PRISM_AI_MODEL", "deepseek-chat"),
+        )
+
+    # 2. Official Deepseek
+    if raw.get("DEEPSEEK_API_KEY"):
+        base = raw.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com").rstrip("/")
+        return (base, raw["DEEPSEEK_API_KEY"], "deepseek-chat")
+
+    # 3. Official Anthropic
+    if raw.get("ANTHROPIC_API_KEY"):
+        base = raw.get("ANTHROPIC_BASE_URL", "https://api.anthropic.com").rstrip("/")
+        return (base, raw["ANTHROPIC_API_KEY"], "claude-haiku-4-5-20251001")
+
+    # 4. Internal fallback from .env.keys (local dev only)
+    for url_key, key_key, model in [
+        ("RELAY_LANYI_BASE_URL", "RELAY_LANYI_KEY", "claude-haiku-4-5-20251001"),
+        ("RELAY_SPACECX_BASE_URL", "RELAY_SPACECX_KEY", "deepseek-chat"),
+    ]:
+        if raw.get(key_key) and raw.get(url_key):
+            return (raw[url_key].rstrip("/"), raw[key_key], model)
+
+    return ("", "", "")
 
 
 def estimate_latencies(project_dir: str, service_names: list[str]) -> dict[str, dict]:
@@ -17,62 +83,37 @@ def estimate_latencies(project_dir: str, service_names: list[str]) -> dict[str, 
 
     Returns: {service_name: {"p50": float_ms, "p99": float_ms, "confidence": str, "reason": str}}
     """
-    try:
-        import anthropic
-    except ImportError:
+    base_url, api_key, model = _load_api_config()
+    if not base_url or not api_key:
         return {}
 
-    api_key = (os.environ.get("ANTHROPIC_API_KEY") or
-               _read_key_from_env_file(project_dir))
-    if not api_key:
-        return {}
-
-    client = anthropic.Anthropic(api_key=api_key)
     results = {}
-
     for service_name in service_names:
         code_snippets = _extract_code_snippets(project_dir, service_name)
         if not code_snippets:
             continue
-
-        estimate = _ask_claude(client, service_name, code_snippets)
+        estimate = _ask_model(base_url, api_key, model, service_name, code_snippets)
         if estimate:
             results[service_name] = estimate
 
     return results
 
 
-def _read_key_from_env_file(project_dir: str) -> Optional[str]:
-    for fname in [".env", ".env.keys", ".env.local"]:
-        path = os.path.join(project_dir, fname)
-        if os.path.exists(path):
-            with open(path, "r") as f:
-                for line in f:
-                    if line.startswith("ANTHROPIC_API_KEY="):
-                        return line.split("=", 1)[1].strip().strip('"\'')
-    return None
-
-
 def _extract_code_snippets(project_dir: str, service_name: str) -> list[str]:
     """Find source files for a service and extract relevant snippets."""
     snippets = []
     patterns = [
-        # DB queries
         r"\.query\(", r"\.execute\(", r"SELECT ", r"INSERT ", r"UPDATE ",
         r"\.find\(", r"\.findOne\(", r"\.save\(", r"\.create\(",
-        # HTTP calls
         r"requests\.", r"axios\.", r"fetch\(", r"http\.get", r"http\.post",
         r"RestTemplate", r"WebClient", r"HttpClient",
-        # Cache
         r"redis\.", r"cache\.get", r"cache\.set", r"\.get\(key",
-        # Async/queue
         r"kafka\.", r"rabbitmq\.", r"\.publish\(", r"\.send\(",
     ]
 
-    # Search for service directory
     service_dirs = _find_service_dir(project_dir, service_name)
 
-    for svc_dir in service_dirs[:2]:  # limit to 2 dirs
+    for svc_dir in service_dirs[:2]:
         for root, _, files in os.walk(svc_dir):
             for fname in files:
                 if not any(fname.endswith(ext) for ext in
@@ -82,10 +123,7 @@ def _extract_code_snippets(project_dir: str, service_name: str) -> list[str]:
                 try:
                     with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
                         content = f.read()
-                    # Check if file has relevant patterns
-                    import re
                     if any(re.search(p, content) for p in patterns):
-                        # Extract relevant lines with context
                         lines = content.split("\n")
                         relevant = []
                         for i, line in enumerate(lines):
@@ -111,18 +149,15 @@ def _find_service_dir(project_dir: str, service_name: str) -> list[str]:
     """Find directories that likely contain the service's source code."""
     candidates = []
 
-    # Direct match
     direct = os.path.join(project_dir, service_name)
     if os.path.isdir(direct):
         candidates.append(direct)
 
-    # Common patterns: src/service_name, services/service_name, apps/service_name
     for prefix in ["src", "services", "apps", "microservices"]:
         path = os.path.join(project_dir, prefix, service_name)
         if os.path.isdir(path):
             candidates.append(path)
 
-    # Fuzzy: any subdir containing service_name
     if not candidates:
         try:
             for entry in os.scandir(project_dir):
@@ -134,10 +169,12 @@ def _find_service_dir(project_dir: str, service_name: str) -> list[str]:
     return candidates
 
 
-def _ask_claude(client, service_name: str, snippets: list[str]) -> Optional[dict]:
-    """Ask Claude to estimate latency from code snippets."""
-    code_context = "\n\n".join(snippets)
+def _ask_model(base_url: str, api_key: str, model: str,
+               service_name: str, snippets: list[str]) -> Optional[dict]:
+    """Ask the model to estimate latency from code snippets."""
+    import urllib.request
 
+    code_context = "\n\n".join(snippets)
     prompt = f"""You are analyzing source code for a microservice called '{service_name}' to estimate its typical request latency.
 
 Here are relevant code snippets showing database queries, HTTP calls, and other I/O operations:
@@ -158,20 +195,58 @@ Respond with ONLY valid JSON, no explanation:
 {{"p50_ms": <number>, "p99_ms": <number>, "confidence": "high|medium|low", "reason": "<one sentence>", "is_async": <true|false>}}"""
 
     try:
-        response = client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=200,
-            messages=[{"role": "user", "content": prompt}]
+        payload = json.dumps({
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": 200,
+            "temperature": 0.2,
+        }).encode("utf-8")
+
+        req = urllib.request.Request(
+            f"{base_url}/v1/chat/completions",
+            data=payload,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}",
+            },
+            method="POST",
         )
-        text = response.content[0].text.strip()
-        # Extract JSON if wrapped in markdown
-        if "```" in text:
-            text = text.split("```")[1]
-            if text.startswith("json"):
-                text = text[4:]
-        return json.loads(text)
+
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            text = data["choices"][0]["message"].get("content", "").strip()
+
+        return _parse_response(text)
+
     except Exception:
         return None
+
+
+def _parse_response(text: str) -> Optional[dict]:
+    """Parse JSON from model response."""
+    if "```" in text:
+        parts = text.split("```")
+        for part in parts:
+            part = part.strip()
+            if part.startswith("json"):
+                part = part[4:].strip()
+            try:
+                return json.loads(part)
+            except Exception:
+                continue
+
+    try:
+        return json.loads(text)
+    except Exception:
+        start = text.find("{")
+        end = text.rfind("}") + 1
+        if start >= 0 and end > start:
+            try:
+                return json.loads(text[start:end])
+            except Exception:
+                pass
+
+    return None
 
 
 def apply_estimates_to_yaml(yaml_content: str, estimates: dict[str, dict]) -> str:
@@ -181,11 +256,9 @@ def apply_estimates_to_yaml(yaml_content: str, estimates: dict[str, dict]) -> st
     current_service = None
 
     for line in lines:
-        # Track current service
         if "    - name:" in line:
             current_service = line.split("name:")[-1].strip()
 
-        # Replace TODO latencies
         if current_service and current_service in estimates:
             est = estimates[current_service]
             p50 = est.get("p50_ms", 10)

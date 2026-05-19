@@ -13,23 +13,57 @@ from evidence import format_verdict
 from infer import infer_topology
 from scanner import scan_project
 from ai_estimator import estimate_latencies, apply_estimates_to_yaml
+from advisor import get_optimization_advice, format_advice
+from patterns import match_pattern, format_patterns
+from forecaster import forecast_peak_qps, format_forecast, generate_sample_traffic_data
 
 
 def cmd_check(args):
     """Check a topology YAML for performance feasibility."""
     if not args:
-        print("Usage: prism-perf check <topology.yaml>")
+        print("Usage: prism-perf check <topology.yaml> [--advise] [--traffic <data.csv>]")
         sys.exit(1)
 
     path = args[0]
+    advise = "--advise" in args
+    traffic_path = None
+    if "--traffic" in args:
+        idx = args.index("--traffic")
+        if idx + 1 < len(args):
+            traffic_path = args[idx + 1]
+
     if not os.path.exists(path):
         print(f"Error: file not found: {path}")
         sys.exit(1)
 
     topology = load_topology(path)
+
+    # Apply traffic forecast to throughput target if provided
+    if traffic_path:
+        if not os.path.exists(traffic_path):
+            print(f"Warning: traffic file not found: {traffic_path}")
+        else:
+            forecast = forecast_peak_qps(traffic_path)
+            print(format_forecast(forecast))
+            if forecast and "forecast_p99_qps" in forecast:
+                topology.target.throughput_qps = forecast["forecast_p99_qps"]
+                print(f"  Using forecast p99 QPS ({forecast['forecast_p99_qps']}) as throughput target.\n")
+
     verdict, results = solve(topology)
     report = format_verdict(verdict, results, topology.name)
     print(report)
+
+    # Pattern matching (always shown for INFEASIBLE)
+    if verdict.value == "INFEASIBLE":
+        pattern_matches = match_pattern(topology, results)
+        if pattern_matches:
+            print(format_patterns(pattern_matches))
+
+    # AI advice (opt-in)
+    if advise and verdict.value == "INFEASIBLE":
+        print("Consulting AI advisor ...")
+        advice = get_optimization_advice(topology, verdict, results)
+        print(format_advice(advice))
 
     _log_result(topology, verdict, results)
 
@@ -221,17 +255,22 @@ def main():
         print("")
         print("Commands:")
         print("  scan [dir]               Auto-detect topology from project files")
-        print("                           Reads: docker-compose.yml, k8s/, openapi.yaml")
         print("                           --output <path>   write to file")
         print("                           --ai              estimate latencies from source code")
         print("  check <topology.yaml>    Check if SLA target is feasible")
+        print("                           --advise          get AI optimization advice (Deepseek)")
+        print("                           --traffic <csv>   use traffic forecast as throughput target")
+        print("  forecast <traffic.csv>   Forecast peak QPS from historical data")
+        print("                           --days N          forecast horizon (default: 30)")
         print("  infer <trace.json>       Generate topology YAML from OTel trace")
         print("                           --output <path>     write to file")
         print("                           --preserve-target   keep existing target/resources")
+        print("  sample-traffic [path]    Generate sample traffic CSV for testing")
         print("")
         print("Examples:")
-        print("  python prism_perf.py check examples/payment_chain.yaml")
-        print("  python prism_perf.py infer examples/sample_trace.json --output my_topology.yaml")
+        print("  python prism_perf.py check examples/payment_chain.yaml --advise")
+        print("  python prism_perf.py sample-traffic && python prism_perf.py forecast sample_traffic.csv")
+        print("  python prism_perf.py check examples/payment_chain.yaml --traffic sample_traffic.csv")
         sys.exit(0)
 
     cmd = sys.argv[1]
@@ -243,6 +282,22 @@ def main():
         cmd_infer(args)
     elif cmd == "scan":
         cmd_scan(args)
+    elif cmd == "forecast":
+        if not args:
+            print("Usage: prism-perf forecast <traffic.csv> [--days 30]")
+            sys.exit(1)
+        days = 30
+        if "--days" in args:
+            idx = args.index("--days")
+            if idx + 1 < len(args):
+                days = int(args[idx + 1])
+        forecast = forecast_peak_qps(args[0], horizon_days=days)
+        print(format_forecast(forecast))
+    elif cmd == "sample-traffic":
+        out = args[0] if args else "sample_traffic.csv"
+        generate_sample_traffic_data(out)
+        print(f"Sample traffic data written to: {out}")
+        print(f"Try: python prism_perf.py forecast {out}")
     else:
         print(f"Unknown command: {cmd}")
         print("Available: check, infer")
