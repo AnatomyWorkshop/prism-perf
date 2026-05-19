@@ -12,6 +12,7 @@ from solver import solve
 from evidence import format_verdict
 from infer import infer_topology
 from scanner import scan_project
+from ai_estimator import estimate_latencies, apply_estimates_to_yaml
 
 
 def cmd_check(args):
@@ -39,6 +40,8 @@ def cmd_scan(args):
     """Scan a project directory and infer topology."""
     project_dir = args[0] if args else "."
     output_path = None
+    use_ai = "--ai" in args
+
     if "--output" in args:
         idx = args.index("--output")
         if idx + 1 < len(args):
@@ -57,12 +60,29 @@ def cmd_scan(args):
         print("Try: prism-perf infer <trace.json>")
         sys.exit(1)
 
+    if use_ai:
+        # Extract service names from YAML
+        service_names = [
+            line.split("name:")[-1].strip()
+            for line in yaml_content.split("\n")
+            if "    - name:" in line
+        ]
+        if service_names:
+            print(f"Estimating latencies for {len(service_names)} services via AI ...")
+            estimates = estimate_latencies(project_dir, service_names)
+            if estimates:
+                yaml_content = apply_estimates_to_yaml(yaml_content, estimates)
+                print(f"  Estimated: {', '.join(estimates.keys())}")
+            else:
+                print("  No ANTHROPIC_API_KEY found — skipping AI estimation")
+                print("  Set ANTHROPIC_API_KEY or add to .env to enable")
+
     if output_path:
         os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
         with open(output_path, "w", encoding="utf-8") as f:
             f.write(yaml_content)
         print(f"Topology written to: {output_path}")
-        print("Next: fill in latency estimates and target, then run:")
+        print("Next: verify chain and target, then run:")
         print(f"  python prism_perf.py check {output_path}")
     else:
         print(yaml_content)
@@ -202,6 +222,8 @@ def main():
         print("Commands:")
         print("  scan [dir]               Auto-detect topology from project files")
         print("                           Reads: docker-compose.yml, k8s/, openapi.yaml")
+        print("                           --output <path>   write to file")
+        print("                           --ai              estimate latencies from source code")
         print("  check <topology.yaml>    Check if SLA target is feasible")
         print("  infer <trace.json>       Generate topology YAML from OTel trace")
         print("                           --output <path>     write to file")

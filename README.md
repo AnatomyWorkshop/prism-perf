@@ -36,14 +36,15 @@ Observability tools tell you what IS. Load tests tell you what HAPPENS. prism-pe
 ```bash
 # Scan your project — reads docker-compose.yml, k8s/, openapi.yaml automatically
 python prism_perf.py scan . --output topology.yaml
-# Fill in latency estimates and target, then:
-python prism_perf.py check topology.yaml
+
+# With AI latency estimation (reads source code, estimates p50/p99)
+# Requires ANTHROPIC_API_KEY
+python prism_perf.py scan . --ai --output topology.yaml
 
 # Or generate topology from OpenTelemetry trace (latencies auto-measured)
 python prism_perf.py infer trace.json --output topology.yaml
-python prism_perf.py check topology.yaml
 
-# Or write topology.yaml manually and check directly
+# Check feasibility
 python prism_perf.py check topology.yaml
 ```
 
