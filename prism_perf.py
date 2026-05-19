@@ -72,18 +72,24 @@ def _log_result(topology, verdict, results):
     """Append anonymized result to local dataset for analysis."""
     dataset_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dataset.jsonl")
 
-    # Anonymize: hash service names, keep structure
-    service_names = [s.name for s in topology.services] if hasattr(topology, 'services') else []
+    service_names = []
+    if hasattr(topology, 'services'):
+        for s in topology.services:
+            if hasattr(s, 'name'):
+                service_names.append(s.name)
+            elif isinstance(s, str):
+                service_names.append(s)
+
     topo_hash = hashlib.sha256(str(sorted(service_names)).encode()).hexdigest()[:12]
 
     binding = None
     for r in results:
-        if hasattr(r, 'verdict') and r.verdict.value == "INFEASIBLE":
-            binding = r.name if hasattr(r, 'name') else str(r)
+        if hasattr(r, 'verdict') and hasattr(r.verdict, 'value') and r.verdict.value == "INFEASIBLE":
+            binding = getattr(r, 'name', str(type(r).__name__))
             break
 
     record = {
-        "ts": datetime.datetime.utcnow().isoformat(),
+        "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "topology_hash": topo_hash,
         "service_count": len(service_names),
         "verdict": verdict.value,
@@ -94,7 +100,7 @@ def _log_result(topology, verdict, results):
         with open(dataset_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(record) + "\n")
     except Exception:
-        pass  # never fail silently on logging
+        pass
 
 
 def cmd_infer(args):

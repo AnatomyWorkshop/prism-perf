@@ -1,0 +1,40 @@
+# ewolff Spring Cloud microservice — realistic topology
+# customer -> order -> catalog chain, Zuul as API gateway
+topology:
+  name: "ewolff-order-flow"
+  services:
+    - name: zuul
+      type: sync
+      latency_p50: 3ms
+      latency_p99: 10ms
+
+    - name: customer
+      type: sync
+      latency_p50: 20ms
+      latency_p99: 80ms
+      connections: 10
+
+    - name: catalog
+      type: sync
+      latency_p50: 15ms
+      latency_p99: 60ms
+      connections: 10
+
+    - name: order
+      type: sync
+      latency_p50: 35ms
+      latency_p99: 120ms
+      connections: 10
+      parallelism: 2
+      serial_fraction: 0.4
+
+  chain:
+    - zuul -> customer -> catalog -> order
+
+  resources:
+    connection_pool: 10
+    network_rtt_internal: 0.5ms
+
+target:
+  latency_p99: 100ms
+  throughput: 2000 qps

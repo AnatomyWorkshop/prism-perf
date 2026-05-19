@@ -50,6 +50,13 @@ def _find_compose(project_dir: str) -> Optional[str]:
         path = os.path.join(project_dir, name)
         if os.path.exists(path):
             return path
+    # Check one level deep
+    for subdir in ["docker", "deploy", "infra", "build"]:
+        for name in ["docker-compose.yml", "docker-compose.yaml",
+                     "compose.yml", "compose.yaml"]:
+            path = os.path.join(project_dir, subdir, name)
+            if os.path.exists(path):
+                return path
     return None
 
 
