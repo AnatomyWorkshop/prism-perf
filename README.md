@@ -116,7 +116,7 @@ jobs:
       pull-requests: write
     steps:
       - uses: actions/checkout@v4
-      - uses: AnatomyWorkshop/prism-perf@main
+      - uses: AnatomyWorkshop/prism-perf@v0.1.0
         with:
           topology-path: 'infra/topology.yaml'
           comment: 'true'

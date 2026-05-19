@@ -2,6 +2,10 @@ name: 'Prism-Perf Check'
 description: 'Detect mathematically impossible performance targets in your microservice topology'
 author: 'AnatomyWorkshop'
 
+branding:
+  icon: 'alert-triangle'
+  color: 'orange'
+
 inputs:
   topology-path:
     description: 'Path to topology YAML file'
