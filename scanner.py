@@ -98,7 +98,6 @@ def _infer_from_compose(compose_path: str) -> str:
         if not isinstance(svc_cfg, dict):
             continue
 
-        # Extract resource hints from deploy.resources
         cpu_limit = None
         mem_limit = None
         deploy = svc_cfg.get("deploy", {})
@@ -107,12 +106,10 @@ def _infer_from_compose(compose_path: str) -> str:
             cpu_limit = resources.get("cpus")
             mem_limit = resources.get("memory")
 
-        # Extract port hints
         ports = svc_cfg.get("ports", [])
         has_http = any("80" in str(p) or "8080" in str(p) or "3000" in str(p)
                        for p in ports)
 
-        # Skip pure infrastructure services (db, cache, queue)
         svc_type = _classify_service(svc_name, svc_cfg)
 
         services.append({
@@ -129,10 +126,10 @@ def _infer_from_compose(compose_path: str) -> str:
         if deps:
             depends[svc_name] = deps
 
-    # Infer call chain: services that depend on others form the chain
     chain = _build_chain_from_deps(services, depends)
 
-    return _generate_topology_yaml(services, chain, source="docker-compose")
+    return _generate_topology_yaml(services, chain, source="docker-compose",
+                                   chain_warning=bool(chain))
 
 
 def _infer_from_k8s(k8s_dir: str) -> str:
@@ -307,11 +304,27 @@ def _parse_k8s_file(path: str) -> list:
         return []
 
 
-def _generate_topology_yaml(services: list, chains: list, source: str) -> str:
+def _generate_topology_yaml(services: list, chains: list, source: str,
+                            chain_warning: bool = False) -> str:
     """Generate topology YAML from extracted services and chains."""
     lines = [
         f"# Auto-generated from {source}",
-        f"# Review and fill in: target, resources, latency estimates",
+        f"# IMPORTANT: Review all assumptions before running check.",
+        f"#",
+        f"# Latencies marked TODO must be filled in — use 'prism-perf infer <trace.json>'",
+        f"# to measure them from real traffic instead of guessing.",
+    ]
+
+    if chain_warning:
+        lines += [
+            f"#",
+            f"# WARNING: Call chain inferred from depends_on / startup order.",
+            f"# depends_on does NOT mean 'calls in request path'.",
+            f"# Verify the chain matches your actual request flow before checking.",
+            f"# Async services (Kafka, RabbitMQ consumers) should be removed from chain.",
+        ]
+
+    lines += [
         "topology:",
         f'  name: "scanned-topology"',
         "  services:",

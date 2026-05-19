@@ -11,6 +11,13 @@ def format_verdict(overall: Verdict, results: List[ConstraintResult], topology_n
     lines.append(f"{'='*60}")
     lines.append("")
     lines.append(f"VERDICT: {overall.value}")
+
+    if overall == Verdict.INFEASIBLE:
+        lines.append("")
+        lines.append("NOTE: This verdict assumes the topology YAML accurately describes")
+        lines.append("your system. Results are invalid if caching layers, async decoupling,")
+        lines.append("or circuit breakers are present but not declared.")
+
     lines.append("")
 
     infeasible = [r for r in results if r.verdict == Verdict.INFEASIBLE]
