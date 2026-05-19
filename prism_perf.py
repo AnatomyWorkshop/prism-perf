@@ -1,6 +1,9 @@
 """prism-perf: Performance impossibility detection for microservice architectures."""
 import sys
 import os
+import json
+import hashlib
+import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -8,6 +11,7 @@ from topology import load_topology
 from solver import solve
 from evidence import format_verdict
 from infer import infer_topology
+from scanner import scan_project
 
 
 def cmd_check(args):
@@ -26,7 +30,71 @@ def cmd_check(args):
     report = format_verdict(verdict, results, topology.name)
     print(report)
 
+    _log_result(topology, verdict, results)
+
     return 0 if verdict.value == "FEASIBLE" else 1
+
+
+def cmd_scan(args):
+    """Scan a project directory and infer topology."""
+    project_dir = args[0] if args else "."
+    output_path = None
+    if "--output" in args:
+        idx = args.index("--output")
+        if idx + 1 < len(args):
+            output_path = args[idx + 1]
+
+    if not os.path.isdir(project_dir):
+        print(f"Error: not a directory: {project_dir}")
+        sys.exit(1)
+
+    print(f"Scanning {os.path.abspath(project_dir)} ...")
+    yaml_content = scan_project(project_dir)
+
+    if yaml_content is None:
+        print("No topology sources found.")
+        print("Supported: docker-compose.yml, k8s/ manifests, openapi.yaml")
+        print("Try: prism-perf infer <trace.json>")
+        sys.exit(1)
+
+    if output_path:
+        os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write(yaml_content)
+        print(f"Topology written to: {output_path}")
+        print("Next: fill in latency estimates and target, then run:")
+        print(f"  python prism_perf.py check {output_path}")
+    else:
+        print(yaml_content)
+
+
+def _log_result(topology, verdict, results):
+    """Append anonymized result to local dataset for analysis."""
+    dataset_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dataset.jsonl")
+
+    # Anonymize: hash service names, keep structure
+    service_names = [s.name for s in topology.services] if hasattr(topology, 'services') else []
+    topo_hash = hashlib.sha256(str(sorted(service_names)).encode()).hexdigest()[:12]
+
+    binding = None
+    for r in results:
+        if hasattr(r, 'verdict') and r.verdict.value == "INFEASIBLE":
+            binding = r.name if hasattr(r, 'name') else str(r)
+            break
+
+    record = {
+        "ts": datetime.datetime.utcnow().isoformat(),
+        "topology_hash": topo_hash,
+        "service_count": len(service_names),
+        "verdict": verdict.value,
+        "binding_constraint": binding,
+    }
+
+    try:
+        with open(dataset_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(record) + "\n")
+    except Exception:
+        pass  # never fail silently on logging
 
 
 def cmd_infer(args):
@@ -126,6 +194,8 @@ def main():
         print("prism-perf: Performance impossibility detection")
         print("")
         print("Commands:")
+        print("  scan [dir]               Auto-detect topology from project files")
+        print("                           Reads: docker-compose.yml, k8s/, openapi.yaml")
         print("  check <topology.yaml>    Check if SLA target is feasible")
         print("  infer <trace.json>       Generate topology YAML from OTel trace")
         print("                           --output <path>     write to file")
@@ -143,6 +213,8 @@ def main():
         sys.exit(cmd_check(args))
     elif cmd == "infer":
         cmd_infer(args)
+    elif cmd == "scan":
+        cmd_scan(args)
     else:
         print(f"Unknown command: {cmd}")
         print("Available: check, infer")
