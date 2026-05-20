@@ -58,7 +58,7 @@ jobs:
 
       - name: Open PR if changed
         if: steps.diff.outputs.changed == 'true'
-        uses: peter-evans/create-pull-request@v6
+        uses: peter-evans/create-pull-request@v7
         with:
           commit-message: 'chore: refresh topology from latest OTel traces'
           title: 'Topology refresh — latencies updated from production traces'
