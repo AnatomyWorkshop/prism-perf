@@ -1,0 +1,33 @@
+# Demonstrates FEASIBLE verdict for a fan-out (parallel) product page API.
+# Fan-out p99 = max(catalogue_service p99, recommendations_service p99) + api_gateway p99 + RTT
+#             = max(20ms, 30ms) + 5ms + 0.5ms = ~35.5ms, well under the 80ms target.
+# Little's Law: 5000 qps * 0.030s = 150 concurrent requests, within connection_pool=200 per service.
+
+topology:
+  name: "product-page-fanout"
+  services:
+    - name: api_gateway
+      type: sync
+      latency_p50: 2ms
+      latency_p99: 5ms
+    - name: catalogue_service
+      type: sync
+      latency_p50: 8ms
+      latency_p99: 20ms
+      connections: 200
+    - name: recommendations_service
+      type: sync
+      latency_p50: 12ms
+      latency_p99: 30ms
+      connections: 200
+
+  chain:
+    - api_gateway -> [catalogue_service, recommendations_service]
+
+  resources:
+    connection_pool: 200
+    network_rtt_internal: 0.5ms
+
+target:
+  latency_p99: 80ms
+  throughput: 5000 qps

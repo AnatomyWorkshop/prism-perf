@@ -56,16 +56,31 @@ class SerialLatencySum(Constraint):
 
         results = []
         for chain in topology.chains:
-            services = topology.get_chain_services(chain)
             total_latency = 0.0
             breakdown = []
 
-            for svc in services:
-                lat = svc.latency_p99 or svc.latency_per_op or 0.0
-                total_latency += lat
-                breakdown.append(f"{svc.name}={lat:.1f}ms")
+            for step in chain.steps:
+                if step.is_fanout:
+                    # Fan-out: p99 = max of parallel branches (extreme value bound)
+                    branch_lats = []
+                    for svc_name in step.services:
+                        svc = topology.services.get(svc_name)
+                        if svc:
+                            lat = svc.latency_p99 or svc.latency_per_op or 0.0
+                            branch_lats.append((svc_name, lat))
+                    if branch_lats:
+                        max_lat = max(lat for _, lat in branch_lats)
+                        branch_str = ", ".join(f"{n}={l:.1f}ms" for n, l in branch_lats)
+                        breakdown.append(f"max({branch_str})={max_lat:.1f}ms")
+                        total_latency += max_lat
+                else:
+                    svc = topology.services.get(step.services[0])
+                    if svc:
+                        lat = svc.latency_p99 or svc.latency_per_op or 0.0
+                        total_latency += lat
+                        breakdown.append(f"{svc.name}={lat:.1f}ms")
 
-            n_hops = len(services) - 1
+            n_hops = len(chain.steps) - 1
             rtt = topology.resources.network_rtt_internal or 0.0
             rtt_total = n_hops * rtt
             total_latency += rtt_total
@@ -75,7 +90,7 @@ class SerialLatencySum(Constraint):
             target = topology.target.latency_p99
             margin = target - total_latency
 
-            chain_str = " → ".join(chain.services)
+            chain_str = " → ".join(step.name for step in chain.steps)
             evidence_lines = [
                 f"Chain: {chain_str}",
                 f"Components: {' + '.join(breakdown)}",
@@ -292,16 +307,20 @@ class MMcQueueStability(Constraint):
         return "M/M/c Queue Stability"
 
     def _erlang_c(self, c: int, rho: float) -> float:
-        """Probability of queuing (Erlang-C formula)."""
+        """Probability of queuing (Erlang-C formula), computed in log-space to avoid overflow."""
         if rho >= 1.0:
             return 1.0
         a = c * rho
-        # P(0) via recursive formula
-        sum_terms = sum((a ** k) / math.factorial(k) for k in range(c))
-        last_term = (a ** c) / (math.factorial(c) * (1 - rho))
+        # Use log-space to avoid factorial overflow for large c
+        log_a = math.log(a) if a > 0 else float('-inf')
+        log_terms = [k * log_a - sum(math.log(i) for i in range(1, k + 1)) for k in range(c)]
+        max_log = max(log_terms) if log_terms else 0
+        sum_terms = sum(math.exp(lt - max_log) for lt in log_terms) * math.exp(max_log)
+        log_last = c * log_a - sum(math.log(i) for i in range(1, c + 1)) - math.log(1 - rho)
+        last_term = math.exp(log_last)
         p0 = 1.0 / (sum_terms + last_term)
-        pc = ((a ** c) / math.factorial(c)) * (1.0 / (1 - rho)) * p0
-        return pc
+        pc = last_term * p0
+        return min(pc, 1.0)
 
     def check(self, topology: Topology) -> ConstraintResult:
         if topology.target.throughput_qps is None:

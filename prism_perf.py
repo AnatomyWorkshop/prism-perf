@@ -249,17 +249,63 @@ def _merge_preserve_target(new_yaml: str, existing_path: str) -> str:
     return result
 
 
+def cmd_demo(args):
+    """Run a built-in demo showing INFEASIBLE and FEASIBLE verdicts."""
+    import shutil
+
+    demo_infeasible = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                   "examples", "demo_infeasible.yaml")
+    demo_fanout = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                               "examples", "demo_fanout.yaml")
+
+    print("=" * 60)
+    print("PRISM-PERF DEMO")
+    print("=" * 60)
+    print()
+    print("Demo 1: Serial checkout chain (should be INFEASIBLE)")
+    print(f"  topology: examples/demo_infeasible.yaml")
+    print()
+
+    topology = load_topology(demo_infeasible)
+    verdict, results = solve(topology)
+    print(format_verdict(verdict, results, topology.name))
+
+    pattern_matches = match_pattern(topology, results)
+    if pattern_matches:
+        print(format_patterns(pattern_matches))
+
+    print()
+    print("-" * 60)
+    print()
+    print("Demo 2: Fan-out product page API (should be FEASIBLE)")
+    print(f"  topology: examples/demo_fanout.yaml")
+    print()
+
+    topology2 = load_topology(demo_fanout)
+    verdict2, results2 = solve(topology2)
+    print(format_verdict(verdict2, results2, topology2.name))
+
+    print()
+    print("=" * 60)
+    print("Try it yourself:")
+    print("  python prism_perf.py check examples/demo_infeasible.yaml")
+    print("  python prism_perf.py check examples/demo_fanout.yaml")
+    print("  python prism_perf.py check examples/payment_chain.yaml --advise")
+    print("=" * 60)
+
+
 def main():
     if len(sys.argv) < 2:
         print("prism-perf: Performance impossibility detection")
         print("")
         print("Commands:")
+        print("  demo                     Run built-in demo (INFEASIBLE + FEASIBLE examples)")
+        print("  check <topology.yaml>    Check if SLA target is feasible")
+        print("                           --advise          get AI optimization advice")
+        print("                           --traffic <csv>   use traffic forecast as throughput target")
         print("  scan [dir]               Auto-detect topology from project files")
         print("                           --output <path>   write to file")
         print("                           --ai              estimate latencies from source code")
-        print("  check <topology.yaml>    Check if SLA target is feasible")
-        print("                           --advise          get AI optimization advice (Deepseek)")
-        print("                           --traffic <csv>   use traffic forecast as throughput target")
         print("  forecast <traffic.csv>   Forecast peak QPS from historical data")
         print("                           --days N          forecast horizon (default: 30)")
         print("  infer <trace.json>       Generate topology YAML from OTel trace")
@@ -267,16 +313,17 @@ def main():
         print("                           --preserve-target   keep existing target/resources")
         print("  sample-traffic [path]    Generate sample traffic CSV for testing")
         print("")
-        print("Examples:")
+        print("Quick start:")
+        print("  python prism_perf.py demo")
         print("  python prism_perf.py check examples/payment_chain.yaml --advise")
-        print("  python prism_perf.py sample-traffic && python prism_perf.py forecast sample_traffic.csv")
-        print("  python prism_perf.py check examples/payment_chain.yaml --traffic sample_traffic.csv")
         sys.exit(0)
 
     cmd = sys.argv[1]
     args = sys.argv[2:]
 
-    if cmd == "check":
+    if cmd == "demo":
+        cmd_demo(args)
+    elif cmd == "check":
         sys.exit(cmd_check(args))
     elif cmd == "infer":
         cmd_infer(args)
@@ -300,7 +347,7 @@ def main():
         print(f"Try: python prism_perf.py forecast {out}")
     else:
         print(f"Unknown command: {cmd}")
-        print("Available: check, infer")
+        print("Run without arguments for help.")
         sys.exit(1)
 
 

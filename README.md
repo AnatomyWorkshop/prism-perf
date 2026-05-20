@@ -1,46 +1,56 @@
 # prism-perf
 
-Performance impossibility detection for microservice architectures.
+**Stop load testing architectures that math already condemned.**
 
-Given a service topology, resource constraints, and an SLA target, prism-perf proves whether your target is mathematically achievable — or gives you the exact reason it's not.
+prism-perf proves whether your microservice SLA target is mathematically achievable — before you write a line of load test, before you provision a single server. When it says INFEASIBLE, it's a proof, not a prediction.
 
-## What it does
+## Try it in 30 seconds
+
+```bash
+git clone https://github.com/AnatomyWorkshop/prism-perf
+cd prism-perf
+python prism_perf.py demo
+```
 
 ```
-$ python prism_perf.py check examples/payment_chain.yaml
-
 VERDICT: INFEASIBLE
+
+RESOURCE OVERFLOW INDEX (α = demand / capacity):
+
+  α_connection_pool(payment_service) = 36.00  (OVERFLOW) ← BINDING
+  α_queue_load(payment_service)      = 36.00  (OVERFLOW) ← BINDING
+  α_serial_latency                   =  4.81  (OVERFLOW) ← BINDING
 
 BINDING CONSTRAINTS:
 
   1. Serial Latency Sum [worst-case bound]
-     Chain: api_gateway → auth_service → payment_gateway → db_write
-     Lower bound: 541.5ms
-     Target: 100.0ms
-     Gap: 441.5ms (5.4× over target)
+     Chain: api_gateway → auth_service → inventory_service → payment_service → notification_service
+     Lower bound: 722.0ms
+     Target: 150.0ms
+     Gap: 572.0ms (4.8× over target)
 
   2. Little's Law [exact bound]
-     Required concurrency: 10000 QPS × 200.0ms = 2000
-     Available: 20 connections
-     Max achievable: 100 QPS
-
-CANONICAL ARCHITECTURE PATTERNS:
-
-  1. Saga (Distributed Transaction)
-     Why: Payment/shipping in synchronous path — Saga pattern removes them from critical path
-     Model: sum(step_p99) but async — not on request critical path
-     Use when: Multi-service transactions, payment flows
-
-RECOMMENDATIONS:
-  - Make payment_gateway async (removes 500ms from critical path)
-  - Increase connection pool to ≥ 2000
+     Required concurrency: 2000 QPS × 180.0ms = 360
+     Available: 10 connections
+     Max achievable: 56 QPS
 ```
 
-Observability tools tell you what IS. Load tests tell you what HAPPENS. prism-perf tells you what CANNOT BE.
+The demo also shows a **fan-out topology** (A calls B and C in parallel) that is FEASIBLE — p99 = max(B, C) + A, not B + C + A.
+
+## What it does
+
+Observability tools tell you what IS. Load tests tell you what HAPPENS. prism-perf tells you what **CANNOT BE**.
+
+It applies four mathematical laws to your declared topology and either clears it or produces a proof of impossibility with the exact binding constraint and overflow ratio.
+
+**AI is the cartographer, math is the judge.** The `--ai` flag and `scan` command use AI to read your project and draft the topology YAML. The constraint engine that produces the verdict is pure math — no model, no hallucination.
 
 ## Quick start
 
 ```bash
+# Run the built-in demo (no setup needed)
+python prism_perf.py demo
+
 # Scan your project — reads docker-compose.yml, k8s/, openapi.yaml automatically
 python prism_perf.py scan . --output topology.yaml
 
@@ -172,6 +182,16 @@ topology:
       type: sync
       latency_p50: 2ms
       latency_p99: 5ms
+    - name: catalogue
+      type: sync
+      latency_p50: 8ms
+      latency_p99: 20ms
+      connections: 100
+    - name: recommendations
+      type: sync
+      latency_p50: 12ms
+      latency_p99: 30ms
+      connections: 100
     - name: database
       type: sync
       latency_per_op: 5ms
@@ -180,7 +200,10 @@ topology:
       serial_fraction: 0.15   # for Amdahl's Law
 
   chain:
+    # Serial: A -> B -> C (p99 = sum)
     - api_gateway -> database
+    # Fan-out: A -> [B, C] (p99 = max, not sum)
+    - api_gateway -> [catalogue, recommendations] -> database
 
   resources:
     connection_pool: 20
@@ -190,6 +213,8 @@ target:
   latency_p99: 50ms
   throughput: 5000 qps
 ```
+
+Fan-out syntax `[svc_a, svc_b]` means parallel calls — the engine uses `max(p99)` instead of `sum(p99)` for that step.
 
 Don't want to write YAML from scratch? Use `scan` or `infer` to generate it automatically.
 

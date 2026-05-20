@@ -1,0 +1,40 @@
+# Demonstrates INFEASIBLE verdict for a serial e-commerce checkout chain.
+# Serial p99 sum: 5+25+40+450+200 = 720ms, far exceeding the 150ms target.
+# Little's Law is also violated: 2000 qps * 0.72s = 1440 concurrent requests,
+# but connection_pool=10 caps concurrency at 10.
+
+topology:
+  name: "ecommerce-checkout-serial"
+  services:
+    - name: api_gateway
+      type: sync
+      latency_p50: 2ms
+      latency_p99: 5ms
+    - name: auth_service
+      type: sync
+      latency_p50: 10ms
+      latency_p99: 25ms
+    - name: inventory_service
+      type: sync
+      latency_p50: 15ms
+      latency_p99: 40ms
+    - name: payment_service
+      type: sync
+      latency_p50: 180ms
+      latency_p99: 450ms
+      connections: 10
+    - name: notification_service
+      type: sync
+      latency_p50: 80ms
+      latency_p99: 200ms
+
+  chain:
+    - api_gateway -> auth_service -> inventory_service -> payment_service -> notification_service
+
+  resources:
+    connection_pool: 10
+    network_rtt_internal: 0.5ms
+
+target:
+  latency_p99: 150ms
+  throughput: 2000 qps

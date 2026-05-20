@@ -48,13 +48,42 @@ class Service:
 
 
 @dataclass
+class ChainStep:
+    """A single step in a chain: either a single service name or a parallel fan-out group."""
+    services: List[str]  # len=1 for serial, len>1 for parallel fan-out
+
+    @property
+    def is_fanout(self) -> bool:
+        return len(self.services) > 1
+
+    @property
+    def name(self) -> str:
+        """Display name for this step."""
+        if self.is_fanout:
+            return f"[{', '.join(self.services)}]"
+        return self.services[0]
+
+
+@dataclass
 class Chain:
-    services: List[str]
+    services: List[str]       # flat list of all service names (for backward compat)
+    steps: List[ChainStep]    # structured steps with fan-out support
 
     @classmethod
     def from_str(cls, s: str) -> "Chain":
-        parts = [p.strip() for p in re.split(r"\s*->\s*", s.strip())]
-        return cls(services=parts)
+        raw_steps = [p.strip() for p in re.split(r"\s*->\s*", s.strip())]
+        steps = []
+        all_services = []
+        for step in raw_steps:
+            # Fan-out: [svc_a, svc_b] or [svc_a,svc_b]
+            if step.startswith("[") and step.endswith("]"):
+                names = [n.strip() for n in step[1:-1].split(",")]
+                steps.append(ChainStep(services=names))
+                all_services.extend(names)
+            else:
+                steps.append(ChainStep(services=[step]))
+                all_services.append(step)
+        return cls(services=all_services, steps=steps)
 
 
 @dataclass
