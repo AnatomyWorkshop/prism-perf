@@ -3,6 +3,52 @@ from typing import List
 from constraints import ConstraintResult, Verdict
 
 
+def _compute_alpha(result: ConstraintResult) -> float | None:
+    """Compute α = demand / capacity for a constraint result."""
+    details = result.details or {}
+
+    if result.constraint_name == "Serial Latency Sum":
+        bound = details.get("bound_ms")
+        target = details.get("target_ms")
+        if bound and target and target > 0:
+            return bound / target
+
+    elif result.constraint_name == "Little's Law":
+        required = details.get("required")
+        available = details.get("available")
+        if required and available and available > 0:
+            return required / available
+
+    elif result.constraint_name == "Amdahl's Law":
+        max_speedup = details.get("max_speedup")
+        wasted = details.get("wasted")
+        if max_speedup and wasted is not None:
+            service = details.get("service", "")
+            # α = parallelism / saturation_point
+            # wasted > 0 means over-provisioned past the Amdahl limit
+            if max_speedup > 0:
+                return (max_speedup + wasted) / max_speedup
+
+    elif result.constraint_name == "M/M/c Queue Stability":
+        rho = details.get("rho")
+        if rho is not None:
+            return rho  # ρ ≥ 1 means unstable
+
+    return None
+
+
+def _alpha_label(alpha: float) -> str:
+    """Human-readable severity label for α value."""
+    if alpha < 0.5:
+        return "Safe"
+    elif alpha < 0.8:
+        return "Moderate"
+    elif alpha < 1.0:
+        return "Critical Threshold"
+    else:
+        return "OVERFLOW"
+
+
 def format_verdict(overall: Verdict, results: List[ConstraintResult], topology_name: str) -> str:
     """Format full verdict report."""
     lines = []
@@ -23,6 +69,18 @@ def format_verdict(overall: Verdict, results: List[ConstraintResult], topology_n
     infeasible = [r for r in results if r.verdict == Verdict.INFEASIBLE]
     feasible = [r for r in results if r.verdict == Verdict.FEASIBLE]
     unknown = [r for r in results if r.verdict == Verdict.UNKNOWN]
+
+    # α-index summary (resource overflow ratios)
+    all_with_alpha = [(r, _compute_alpha(r)) for r in results if _compute_alpha(r) is not None]
+    if all_with_alpha:
+        lines.append("RESOURCE OVERFLOW INDEX (α = demand / capacity):")
+        lines.append("")
+        for r, alpha in sorted(all_with_alpha, key=lambda x: -x[1]):
+            svc = (r.details or {}).get("service", "system")
+            dim = _alpha_dimension(r)
+            marker = " ← BINDING" if alpha >= 1.0 else ""
+            lines.append(f"  α_{dim:<24} = {alpha:.2f}  ({_alpha_label(alpha)}){marker}")
+        lines.append("")
 
     if infeasible:
         lines.append("BINDING CONSTRAINTS:")
@@ -56,6 +114,22 @@ def format_verdict(overall: Verdict, results: List[ConstraintResult], topology_n
         lines.append("")
 
     return "\n".join(lines)
+
+
+def _alpha_dimension(result: ConstraintResult) -> str:
+    """Map constraint to a resource dimension name."""
+    details = result.details or {}
+    svc = details.get("service", "")
+
+    if result.constraint_name == "Serial Latency Sum":
+        return "serial_latency"
+    elif result.constraint_name == "Little's Law":
+        return f"connection_pool({svc})"
+    elif result.constraint_name == "Amdahl's Law":
+        return f"parallelism({svc})"
+    elif result.constraint_name == "M/M/c Queue Stability":
+        return f"queue_load({svc})"
+    return result.constraint_name
 
 
 def _recommend(result: ConstraintResult) -> List[str]:
