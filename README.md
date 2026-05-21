@@ -245,7 +245,7 @@ jobs:
     permissions:
       pull-requests: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: AnatomyWorkshop/prism-perf@v0.2.0
         with:
           topology-path: 'infra/topology.yaml'
